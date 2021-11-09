@@ -1,0 +1,9 @@
+matplotlib
+pandas
+xlrd
+xlwt
+pymed
+openpyxl
+scipy
+seaborn
+ptitprince
