@@ -22,7 +22,8 @@ def save_plot(plot, file_name):
 def plot_hist(table, xlabel, file_name):
     plot = sns.histplot(table, bins=20)
     plot.set_xlabel(xlabel)
-    save_plot(plot, file_name)
+    # plot.set_title(file_name)
+    save_plot(plot, f'{file_name}_hist')
 
 
 def plot_bar(table, file_name, group_name):
@@ -90,6 +91,13 @@ def plot_barplot(table):
                        color=sns.color_palette()[2])
     plot.set_ylabel('Count')
     save_plot(plot, 'datasets_count_time')
+
+
+def plot_boxplot_ethnicity(table, cond):
+    sns.boxplot(x="Groups", y="Share in reporting datasets (%)", data=table)
+    plot = sns.swarmplot(x="Groups", y="Share in reporting datasets (%)", data=table, color="0", alpha=0.6)
+    # plot.plot(plot.get_xlim(), [50] * 2, 'k--', alpha=0.1)
+    save_plot(plot, f'{cond}_ethicity')
 
 
 def plot_raincloud(table, y_col, y_label, file_name):

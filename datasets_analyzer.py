@@ -1,9 +1,12 @@
 import os
 import pandas as pd
 import scipy.stats as stats
+import numpy as np
 from pathlib import Path
 from datetime import datetime
-from helpers.figure_ploting import plot_bar, plot_hist, plot_boxplot, plot_barplot, plot_raincloud
+from collections import Counter
+from helpers.figure_ploting import plot_bar, plot_hist, plot_boxplot, plot_barplot, plot_boxplot_ethnicity
+from helpers.figure_ploting import plot_raincloud, modality_changer
 
 file = './files/extracted_datasets.xlsx'
 
@@ -31,8 +34,8 @@ def chi_test(table):
 
 
 class DatasetsAnalyzer:
-    def __init__(self, data):
-        self.data = data
+    def __init__(self, data: pd.DataFrame):
+        self.data = data.replace(r'^\s*$', np.nan, regex=True)
         self.stats = {'Date': str(datetime.now())}
 
     def analyze(self):
@@ -62,7 +65,7 @@ class DatasetsAnalyzer:
         else:
             data = pd.DataFrame(columns=self.stats.keys())
         data = data.append(self.stats, ignore_index=True).reset_index()
-        data.to_excel(stats_file_path)
+        data.T.to_excel(stats_file_path)
 
     def calculate_general(self):
         pass
@@ -94,41 +97,51 @@ class DatasetsAnalyzer:
 
     def analyze_general(self):
         self.stats['Total datasets'] = len(self.data)
-        print(f'Count of voice datasets: {self.data["Voice"].sum()}')
-        print(f'Count of image datasets: {self.data["Image"].sum()}')
-        print(f'Count of video datasets: {self.data["Video"].sum()}')
+        table = self.data
+        table['Modality'] = table.T.apply(modality_changer)
+        self.stats['Visual datasets'] = len(table[table['Modality'] == 'visual'])
+        self.stats['Audio datasets'] = len(table[table['Modality'] == 'audio'])
+        self.stats['Audiovisual datasets'] = len(table[table['Modality'] == 'audiovisual'])
+        self.stats['Time span'] = f"{table['Year'].min()} - {table['Year'].max()}"
+        table = table[table['Rater'].notna()]
+        self.stats['Validated datasets'] = len(table)
+        self.stats['External validated'] = len(table[table['Rater'].str.contains('external')])
+        self.stats['Self validated'] = len(table[table['Rater'].str.contains('self')])
+        self.stats['Both validated'] = len(
+            table[table['Rater'].str.contains('external')][table['Rater'].str.contains('self')])
 
-        def print_mean_std_median(column_name):
-            print(
-                f'Mean: P{column_name}: {self.data[f"P{column_name}"].mean()} R{column_name}: {self.data[f"R{column_name}"].mean()}')
-            print(
-                f'Std: P{column_name}: {self.data[f"P{column_name}"].std()} R{column_name}: {self.data[f"R{column_name}"].std()}')
-            print(
-                f'Median: P{column_name}: {self.data[f"P{column_name}"].median()} R{column_name}: {self.data[f"R{column_name}"].median()}')
-
-        print(self.data.describe())
-
-        print_mean_std_median('-male ratio (m/(f+m))')
-        print_mean_std_median('-age-min')
-        print_mean_std_median('-age-max')
-        print_mean_std_median('-age-span')
+    def mean_std_helper(self, who, what):
+        self.stats[f'{who}{what} mean'] = self.data[f'{who}{what}'].mean()
+        self.stats[f'{who}{what} std'] = self.data[f'{who}{what}'].std()
 
     def analyze_age(self):
+        def get_mean_std(who):
+            self.mean_std_helper(who, '-age-min')
+            self.mean_std_helper(who, '-age-max')
+            self.mean_std_helper(who, '-age-span')
+
+        get_mean_std('P')
+        get_mean_std('R')
+
         table = self.data[['Year', 'P-age-span']][self.data['P-age-span'].notna()][self.data['Year'].notna()]
+        self.stats['P-age reported'] = len(table)
         self.stats['Normality p-age'] = str(stats.normaltest(table))
         self.stats['Pearson p-age'] = str(stats.pearsonr(table['Year'].values, table['P-age-span'].values))
         self.stats['Spearman p-age'] = str(stats.spearmanr(table['Year'].values, table['P-age-span'].values))
         table = self.data[['Year', 'R-age-span']][self.data['R-age-span'].notna()][self.data['Year'].notna()]
+        self.stats['R-age reported'] = len(table)
         self.stats['Normality r-age'] = str(stats.normaltest(table))
         self.stats['Pearson r-age'] = str(stats.pearsonr(table['Year'].values, table['R-age-span'].values))
         self.stats['Spearman r-age'] = str(stats.spearmanr(table['Year'].values, table['R-age-span'].values))
 
     def analyze_gender(self):
         table = self.data['P-male ratio (m/(f+m))'][self.data['P-male ratio (m/(f+m))'].notna()]
+        self.stats['P-gender reported'] = len(table)
         self.stats['Normality p-gender'] = str(stats.normaltest(table))
         self.stats['TTest p-gender'] = str(stats.ttest_1samp(a=table, popmean=0.5))
         self.stats['Wilcoxon p-gender'] = str(stats.wilcoxon(table - 0.5))
         table = self.data['R-male ratio (m/(f+m))'][self.data['R-male ratio (m/(f+m))'].notna()]
+        self.stats['R-gender reported'] = len(table)
         self.stats['Normality r-gender'] = str(stats.normaltest(table))
         self.stats['TTest r-gender'] = str(stats.ttest_1samp(a=table, popmean=0.5))
         self.stats['Wilcoxon r-gender'] = str(stats.wilcoxon(table - 0.5))
@@ -155,7 +168,33 @@ class DatasetsAnalyzer:
             stats.spearmanr(table['Year'].values, table['R-male ratio (m/(f+m))'].values))
 
     def analyze_ethnicity(self):
-        pass
+        self.stats['P-ethnicity reported'] = len(self.data[self.data['Ethnicity'].notna()])
+        self.stats['R-ethnicity reported'] = len(self.data[self.data['ER-Ethnicity'].notna()])
+
+        def helper(who):
+            return len(self.data[~self.data[
+                [f'{who}White', f'{who}Asian', f'{who}Black', f'{who}Latinx/Hispanic']].isna().all(axis=1)])
+
+        self.stats['P-ethnicity distribution reported'] = helper('')
+        self.stats['R-ethnicity distribution reported'] = helper('ER-')
+        self.stats['Languages reported'] = len(self.data[self.data['Language'].notna()])
+
+        def get_mean_std(who):
+            def helper(who, what):
+                self.mean_std_helper(who, what)
+                self.stats[f'{who}{what} reported'] = len(self.data[self.data[f'{who}{what}'].notna()])
+
+            helper(who, 'White')
+            helper(who, 'Asian')
+            helper(who, 'Black')
+            helper(who, 'Latinx/Hispanic')
+
+        get_mean_std('')
+        get_mean_std('ER-')
+
+        languages = ','.join(self.data[self.data['Language group'].notna()]['Language group'].tolist())
+        languages = dict(Counter(languages.split(',')))
+        self.stats['Language groups'] = languages
 
     def plot_general(self):
         table = self.data[['Year', 'Samples', 'Voice', 'Image', 'Video']][self.data['Samples'].notna()][
@@ -177,17 +216,30 @@ class DatasetsAnalyzer:
 
     def plot_gender(self):
         table = self.data['P-male ratio (m/(f+m))'][self.data['N-male'].notna()]
-        plot_hist(table, 'Male ratio (m/(f+m))', 'participants_cumulative_hist')
+        plot_hist(table, 'Male ratio (m/(f+m))', 'Participants')
 
         table = self.data['R-male ratio (m/(f+m))'][self.data['N-ER-male'].notna()]
-        plot_hist(table, 'Male ratio (m/(f+m))', 'raters_cumulative_hist')
+        plot_hist(table, 'Male ratio (m/(f+m))', 'Annotators')
 
         table = self.data[['Year', 'P-male ratio (m/(f+m))']][self.data['P-male ratio (m/(f+m))'].notna()][
             self.data['Year'].notna()]
         plot_raincloud(table, 'P-male ratio (m/(f+m))', 'Male ratio (m/(f+m))', 'datasets_gender_time_rain_5')
 
     def plot_ethnicity(self):
-        pass
+        def helper(who):
+            White = self.data[f'{who}White'][self.data[f'{who}White'].notnull()].tolist()
+            Asian = self.data[f'{who}Asian'][self.data[f'{who}Asian'].notnull()].tolist()
+            Black = self.data[f'{who}Black'][self.data[f'{who}Black'].notnull()].tolist()
+            Latinx = self.data[f'{who}Latinx/Hispanic'][self.data[f'{who}Latinx/Hispanic'].notnull()].tolist()
+            Scores = White + Asian + Black + Latinx
+            Groups = ['White'] * len(White) + ['Asian'] * len(Asian) + ['Black'] * len(Black) + [
+                'Latinx/Hispanic'] * len(
+                Latinx)
+            table = pd.DataFrame({"Share in reporting datasets (%)": Scores, 'Groups': Groups})
+            plot_boxplot_ethnicity(table, who)
+
+        helper('')
+        helper('ER-')
 
 
 if __name__ == '__main__':
